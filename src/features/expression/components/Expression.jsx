@@ -1,67 +1,53 @@
 import { useEffect, useRef, useState } from "react";
-import { FilesetResolver, FaceLandmarker } from "@mediapipe/tasks-vision";
-import '../styles/expression.css' 
+import { initialize, getEmotion } from "../utils/utils";
+import "../styles/expression.css";
 
 export default function EmotionDetector() {
   const videoRef = useRef(null);
   const faceLandmarkerRef = useRef(null);
   const animationFrameRef = useRef(null);
+  const detectingRef = useRef(false);
 
-  const [emotion, setEmotion] = useState("Click Detect Emotion");
-  const [loading, setLoading] = useState(false);
+  const [emotion, setEmotion] = useState("Click Start Detection");
+  const [loading, setLoading] = useState(true);
   const [isDetecting, setIsDetecting] = useState(false);
 
   useEffect(() => {
-    initialize();
+    const loadModel = async () => {
+      try {
+        const landmarker = await initialize();
+        faceLandmarkerRef.current = landmarker;
+        console.log("Model Loaded");
+      } catch (err) {
+        console.error(err);
+        setEmotion("Failed to load model");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadModel();
 
     return () => {
-      stopDetection();
+      detectingRef.current = false;
+
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+
+      if (videoRef.current?.srcObject) {
+        videoRef.current.srcObject
+          .getTracks()
+          .forEach((track) => track.stop());
+      }
     };
   }, []);
 
-  async function initialize() {
-    const vision = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
-    );
+  const detectEmotion = () => {
+    if (!detectingRef.current) return;
 
-    faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(
-      vision,
-      {
-        baseOptions: {
-          modelAssetPath:
-            "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
-        },
-        runningMode: "VIDEO",
-        outputFaceBlendshapes: true,
-        numFaces: 1,
-      }
-    );
-  }
-
-  async function startDetection() {
-    if (isDetecting) return;
-
-    setLoading(true);
-
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-    });
-
-    videoRef.current.srcObject = stream;
-
-    await videoRef.current.play();
-
-    setLoading(false);
-    setIsDetecting(true);
-
-    detectEmotion();
-  }
-
-  function detectEmotion() {
-    if (
-      !videoRef.current ||
-      !faceLandmarkerRef.current
-    ) {
+    if (!videoRef.current || !faceLandmarkerRef.current) {
+      animationFrameRef.current = requestAnimationFrame(detectEmotion);
       return;
     }
 
@@ -70,59 +56,55 @@ export default function EmotionDetector() {
       performance.now()
     );
 
-    if (
-      result.faceBlendshapes &&
-      result.faceBlendshapes.length > 0
-    ) {
-      const blendShapes = result.faceBlendshapes[0].categories;
-
-      const getScore = (name) =>
-        blendShapes.find((b) => b.categoryName === name)?.score || 0;
-
-      const smileLeft = getScore("mouthSmileLeft");
-      const smileRight = getScore("mouthSmileRight");
-
-      const browRaise = getScore("browInnerUp");
-
-      const jawOpen = getScore("jawOpen");
-
-      const frownLeft = getScore("mouthFrownLeft");
-      const frownRight = getScore("mouthFrownRight");
-
-      if (smileLeft > 0.5 && smileRight > 0.5) {
-        setEmotion("😊 Happy");
-      } else if (jawOpen > 0.4 && browRaise > 0.3) {
-        setEmotion("😲 Surprised");
-      } else if (frownLeft > 0.001 && frownRight > 0.001) {
-        setEmotion("😢 Sad");
-      } else {
-        setEmotion("😐 Neutral");
-      }
-    } else {
-      setEmotion("No Face Detected");
-    }
+    setEmotion(getEmotion(result));
 
     animationFrameRef.current = requestAnimationFrame(detectEmotion);
-  }
+  };
 
-  function stopDetection() {
+  const startDetection = async () => {
+    if (detectingRef.current) return;
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+      });
+
+      videoRef.current.srcObject = stream;
+
+      await videoRef.current.play();
+
+      detectingRef.current = true;
+      setIsDetecting(true);
+
+      detectEmotion();
+    } catch (err) {
+      console.error(err);
+      setEmotion("Camera Permission Denied");
+    }
+  };
+
+  const stopDetection = () => {
+    detectingRef.current = false;
     setIsDetecting(false);
 
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
     }
 
     if (videoRef.current?.srcObject) {
-      videoRef.current.srcObject.getTracks().forEach((track) => track.stop());
+      videoRef.current.srcObject
+        .getTracks()
+        .forEach((track) => track.stop());
+
       videoRef.current.srcObject = null;
     }
 
     setEmotion("Detection Stopped");
-  }
+  };
 
   return (
     <div className="frame">
-
       <video
         ref={videoRef}
         autoPlay
@@ -130,20 +112,27 @@ export default function EmotionDetector() {
         muted
         width={640}
         height={480}
-        />
+      />
 
-      {loading ? (<h2>Loading...</h2>) : (<h2>{emotion}</h2>)}
+      <h2>
+        {loading ? "Loading AI Model..." : emotion}
+      </h2>
 
       <div className="buttons">
-        <button onClick={startDetection}>
+        <button
+          onClick={startDetection}
+          disabled={loading || isDetecting}
+        >
           Start Detection
         </button>
 
-        <button onClick={stopDetection}>
+        <button
+          onClick={stopDetection}
+          disabled={!isDetecting}
+        >
           Stop Detection
         </button>
       </div>
-
     </div>
   );
 }
