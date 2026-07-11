@@ -54,7 +54,7 @@ async function loginController(req,res){
 
     const user = await userModel.findOne({
         $or:[{username} , {email}]
-    })
+    }).select("+password")
 
     if(!user){
         return res.status(400).json({
@@ -87,4 +87,20 @@ async function loginController(req,res){
     })
 }
 
-module.exports =  {registerController , loginController}
+async function getMe(req,res){
+
+    const user = await userModel.findById(req.user.id).select("-password")
+
+    if(!user){
+        return res.status(404).json({
+            message : 'user not found'
+        })
+    }
+
+    res.status(200).json({
+        message : 'data fetched successfully.',
+        user
+    })
+} 
+
+module.exports =  {registerController , loginController, getMe}
